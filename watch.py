@@ -19,7 +19,9 @@ CONFIG = json.loads((BASE / "hotels.json").read_text(encoding="utf-8"))
 # 점검용: PROBE_DATES="2026-12-08,2026-12-10" 이면 그 날짜로 조회만 한다(--dry와 함께 사용)
 if os.environ.get("PROBE_DATES"):
     CONFIG["check_in"], CONFIG["check_out"] = os.environ["PROBE_DATES"].split(",")
-STATE_PATH = BASE / "state.json"
+STATE_PATH = BASE / os.environ.get("STATE_FILE", "state.json")
+RUNNER = os.environ.get("RUNNER_LABEL", "클라우드" if os.environ.get("GITHUB_ACTIONS") else "Mac")
+FAIL_ALERT_AFTER = 3  # 연속 실패 3회(약 1시간)면 알림
 KST = timezone(timedelta(hours=9))
 
 OTA_NAMES = {
@@ -132,7 +134,15 @@ def main():
             offers = offers_for(hotel)
         except (urllib.error.URLError, TimeoutError, ValueError, KeyError) as e:
             errors.append(f"{hotel['name']}: {e}")
+            prev["fail_count"] = prev.get("fail_count", 0) + 1
+            if prev["fail_count"] == FAIL_ALERT_AFTER and not dry:
+                send(f"⚠️ 조회 실패 ({RUNNER})\n[숙소명] {hotel['name']}\n"
+                     f"{FAIL_ALERT_AFTER}회 연속 조회 실패: {e}\n복구되면 다시 알려드릴게요.", disable_preview=True)
+            state[key] = prev
             continue
+        if prev.get("fail_count", 0) >= FAIL_ALERT_AFTER and not dry:
+            send(f"✅ 조회 복구 ({RUNNER})\n[숙소명] {hotel['name']}", disable_preview=True)
+        prev["fail_count"] = 0
         under = [o for o in offers if o["total_krw"] < threshold]
         cheapest = offers[0]["total_krw"] if offers else None
         print(f"{now:%m-%d %H:%M} {key}: 객실 {len(offers)}개, 최저 {cheapest}, 기준 미만 {len(under)}개")
@@ -142,18 +152,18 @@ def main():
             last = prev.get("alerted_total")
             # 새로 풀렸거나, 지난 알림보다 3% 이상 싸졌을 때만 알린다
             if last is None or best["total_krw"] < last * 0.97:
-                msg = ("🟢 빈방 발견!\n" if last is None else "🔻 더 싸졌어요\n") + build_message(hotel, best, len(under))
+                msg = (f"🟢 빈방 발견! ({RUNNER})\n" if last is None else f"🔻 더 싸졌어요 ({RUNNER})\n") + build_message(hotel, best, len(under))
                 print(msg)
                 if not dry:
                     send(msg, disable_preview=True)
                 prev["alerted_total"] = best["total_krw"]
                 prev["first_seen"] = prev.get("first_seen") or now.isoformat(timespec="minutes")
         elif prev.get("alerted_total") is not None:
-            msg = f"⚪ 다시 마감\n[숙소명] {hotel['name']}\n기준가 미만 객실이 사라졌어요."
+            msg = f"⚪ 다시 마감 ({RUNNER})\n[숙소명] {hotel['name']}\n기준가 미만 객실이 사라졌어요."
             print(msg)
             if not dry:
                 send(msg, disable_preview=True)
-            prev = {}
+            prev = {"fail_count": 0}
         prev["last_check"] = now.isoformat(timespec="minutes")
         prev["cheapest"] = cheapest
         state[key] = prev
