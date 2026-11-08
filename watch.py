@@ -5,6 +5,7 @@ GitHub Actions가 20분마다 실행한다. 대상과 기준은 hotels.json에 �
 기준가 미만인 객실이 새로 나오거나 더 싸지면 텔레그램으로 알린다.
 """
 import json
+import os
 import sys
 import urllib.error
 import urllib.request
@@ -153,6 +154,16 @@ def main():
         prev["last_check"] = now.isoformat(timespec="minutes")
         prev["cheapest"] = cheapest
         state[key] = prev
+
+    # 수동 실행(workflow_dispatch) 때는 현재 상태 요약을 보내 동작을 확인시킨다
+    if os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch" and not dry:
+        lines = [f"📋 감시 상태 ({now:%m-%d %H:%M} KST)",
+                 f"{CONFIG['check_in']}~{CONFIG['check_out']} 성인 {CONFIG['adults']}명 · 기준 {fmt_krw(threshold)} 미만 · 20분 간격"]
+        for h in CONFIG["hotels"]:
+            c = state.get(h["key"], {}).get("cheapest")
+            lines.append(f"- {h['name'].split(' (')[0]}: " + (f"최저 {fmt_krw(c)}" if c else "매진"))
+        lines += [f"- 조회 실패: {e}" for e in errors]
+        send("\n".join(lines), disable_preview=True)
 
     if not dry:
         STATE_PATH.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding="utf-8")
