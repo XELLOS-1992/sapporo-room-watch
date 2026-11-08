@@ -1,0 +1,39 @@
+{
+  "check_in": "2027-01-01",
+  "check_out": "2027-01-03",
+  "adults": 2,
+  "threshold_krw": 1100000,
+  "stop_after": "2027-01-01",
+  "hotels": [
+    {
+      "key": "yurakusoan",
+      "name": "조잔케이 유라쿠소안 (定山渓 ゆらく草庵)",
+      "place": "조잔케이 온천",
+      "location": "삿포로시 미나미구 · 삿포로역에서 버스 약 70분",
+      "naver_id": "8269056217",
+      "official_url": "https://dormy-hotels.com/resort/hotels/yurakusoan/",
+      "tax_area": "sapporo",
+      "onsen_tax_jpy": 150
+    },
+    {
+      "key": "suizantei",
+      "name": "시코츠코 다이이치 호텔 스이잔테이 (支笏湖第一寶亭留 翠山亭)",
+      "place": "시코츠호 온천",
+      "location": "치토세시 · 신치토세공항에서 차로 약 40분",
+      "naver_id": "8058950883",
+      "official_url": "https://reserve.489ban.net/client/shikotsuko-daiichi/0/plan",
+      "tax_area": "hokkaido",
+      "onsen_tax_jpy": 150
+    },
+    {
+      "key": "hanakagura",
+      "name": "모리노유 호텔 하나카구라 (森の湯 花神楽)",
+      "place": "히가시카구라",
+      "location": "가미카와군 히가시카구라 · 아사히카와공항에서 차로 약 20분",
+      "naver_id": "8596467002",
+      "official_url": null,
+      "tax_area": "hokkaido",
+      "onsen_tax_jpy": 150
+    }
+  ]
+}
