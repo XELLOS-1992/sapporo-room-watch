@@ -3,7 +3,12 @@ name: room-watch
 on:
   schedule:
     - cron: "*/20 * * * *"   # 20분마다 (GitHub 사정으로 몇 분 늦을 수 있음)
-  workflow_dispatch: {}       # 수동 실행 버튼
+  workflow_dispatch:          # 수동 실행 버튼
+    inputs:
+      probe_dates:
+        description: "점검용 날짜 (예: 2026-12-08,2026-12-10). 비우면 정상 감시"
+        required: false
+        default: ""
 
 permissions:
   contents: write             # state.json(알림 이력) 저장용
@@ -25,7 +30,9 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python watch.py
+          PROBE_DATES: ${{ inputs.probe_dates }}
+        run: |
+          if [ -n "$PROBE_DATES" ]; then python watch.py --dry; else python watch.py; fi
       - name: 알림 이력 저장
         run: |
           if [ -n "$(git status --porcelain state.json)" ]; then

@@ -16,6 +16,9 @@ from notify import send
 
 BASE = Path(__file__).parent
 CONFIG = json.loads((BASE / "hotels.json").read_text(encoding="utf-8"))
+# 점검용: PROBE_DATES="2026-12-08,2026-12-10" 이면 그 날짜로 조회만 한다(--dry와 함께 사용)
+if os.environ.get("PROBE_DATES"):
+    CONFIG["check_in"], CONFIG["check_out"] = os.environ["PROBE_DATES"].split(",")
 STATE_PATH = BASE / "state.json"
 KST = timezone(timedelta(hours=9))
 
