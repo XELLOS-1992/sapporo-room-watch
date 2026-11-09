@@ -1,7 +1,8 @@
 {
  "yurakusoan": {
-  "last_check": "2026-11-09T01:34+09:00",
-  "cheapest": null
+  "last_check": "2026-11-09T09:12+09:00",
+  "cheapest": null,
+  "fail_count": 0
  },
  "suizantei": {
   "last_check": "2026-11-09T01:34+09:00",
