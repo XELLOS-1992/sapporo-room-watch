@@ -31,6 +31,7 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           PROBE_DATES: ${{ inputs.probe_dates }}
+          SOURCES: official          # 클라우드(해외 IP)는 네이버가 500이라 공식 사이트만
         run: |
           if [ -n "$PROBE_DATES" ]; then python watch.py --dry; else python watch.py; fi
       - name: 알림 이력 저장

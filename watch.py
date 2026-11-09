@@ -1,13 +1,14 @@
 """삿포로 숙소 빈방 감시 (1회 실행 = 1회 확인).
 
 GitHub Actions가 20분마다 실행한다. 대상과 기준은 hotels.json에 있다.
-가격 비교는 네이버호텔의 세금 포함 가격(여러 플랫폼)에 현지 숙박세와 입욕세를 더한 총액으로 한다.
+가격 비교는 네이버호텔의 세금 포함 가격(여러 플랫폼)·공식 예약 요금에 현지 숙박세와 입욕세를 더한 총액으로 한다.
 기준가 미만인 객실이 새로 나오거나 더 싸지면 텔레그램으로 알린다.
 """
 import json
 import os
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -36,7 +37,23 @@ NAVER_QUERY = """query overseasHotelRates($adultCnt:Int!,$checkIn:String!,$check
   totalCount rates{ roomName ota{code isOfficialSite} productFeatures{isFreeCancel freeBreakfast freeDinner}
    rate{userRate localRate{currencyCode rate}} } } }"""
 
-FALLBACK_KRW_PER_JPY = 9.5  # 네이버 응답에 엔화 금액이 없을 때만 쓴다
+FALLBACK_KRW_PER_JPY = 9.5  # 환율 조회도 실패했을 때만 쓴다
+# 조회 경로. 클라우드는 네이버가 막혀(해외 IP면 500) SOURCES=official 로 돌린다.
+SOURCES = set(os.environ.get("SOURCES", "naver,official").split(","))
+DORMY_API = "https://dormy-hotels.com/reserve/api/plans"
+_fx = None
+
+
+def krw_per_jpy():
+    """엔→원 환율. 실패하면 고정값."""
+    global _fx
+    if _fx is None:
+        try:
+            with urllib.request.urlopen("https://open.er-api.com/v6/latest/JPY", timeout=15) as r:
+                _fx = float(json.loads(r.read())["rates"]["KRW"])
+        except Exception:
+            _fx = FALLBACK_KRW_PER_JPY
+    return _fx
 
 
 def lodging_tax_jpy(area, per_person_night_jpy):
@@ -70,10 +87,67 @@ def naver_link(hotel_id):
             f"?dCheckIn={CONFIG['check_in']}&dCheckOut={CONFIG['check_out']}&dAdultCnt={CONFIG['adults']}")
 
 
+def dormy_params(keyword, page=None):
+    q = {"keyword": keyword, "checkin": CONFIG["check_in"], "number_of_nights": nights_count(),
+         "number_of_rooms": 1, "number_of_adults[]": CONFIG["adults"],
+         "number_of_children_need_futons[]": 0, "number_of_children_no_need_futons[]": 0,
+         "search_by_tag": "plan", "tags": "", "brands": "", "order_by": ""}
+    if page:
+        q.update(page=page, search_all="true")
+    return urllib.parse.urlencode(q)
+
+
+def nights_count():
+    return (date.fromisoformat(CONFIG["check_out"]) - date.fromisoformat(CONFIG["check_in"])).days
+
+
+def dormy_offers(hotel):
+    """교리츠(Dormy) 공식 예약. 표시 요금은 1인 1박(소비세 포함), 숙박세·입욕세는 별도."""
+    nights, people, fx = nights_count(), CONFIG["adults"], krw_per_jpy()
+    link = "https://dormy-hotels.com/reserve/search-plan?" + dormy_params(hotel["dormy_keyword"])
+    out, page = [], 1
+    while page and page <= 5:
+        with urllib.request.urlopen(f"{DORMY_API}?{dormy_params(hotel['dormy_keyword'], page)}", timeout=40) as r:
+            data = json.loads(r.read())["data"]
+        for item in data["data"]:
+            for p in item["plan_stages"]:
+                name = p.get("name") or ""
+                if not p.get("price") or not p.get("bookable") or "市民限定" in name:
+                    continue
+                ppn = float(p["price"])
+                tax = (lodging_tax_jpy(hotel["tax_area"], ppn) + hotel["onsen_tax_jpy"]) * nights * people
+                base = ppn * nights * people
+                meals = "조석식" if "2食" in name else "조식" if "朝食" in name else "식사 없음" if "素泊" in name else "-"
+                out.append({
+                    "ota": "공식(교리츠)", "room": name, "meals": meals, "free_cancel": False,
+                    "base_krw": round(base * fx), "local_tax_krw": round(tax * fx),
+                    "total_krw": round((base + tax) * fx), "link": link,
+                    "note": f"1인 1박 {ppn:,.0f}엔 기준 추정",
+                })
+        page = data.get("next_page")
+    return out
+
+
 def offers_for(hotel):
-    """객실 후보 목록을 세금 포함 총액 오름차순으로 돌려준다."""
-    if not hotel.get("naver_id"):
-        return []
+    """조회 경로별로 객실 후보를 모아 세금 포함 총액 오름차순으로 돌려준다.
+    한 경로가 실패해도 다른 경로 결과는 쓴다. 전부 실패하면 마지막 오류를 올린다."""
+    out, errs, tried = [], [], 0
+    for src, fn, need in (("naver", naver_offers, "naver_id"), ("official", dormy_offers, "dormy_keyword")):
+        if src not in SOURCES or not hotel.get(need):
+            continue
+        tried += 1
+        try:
+            out += fn(hotel)
+        except (urllib.error.URLError, TimeoutError, ValueError, KeyError) as e:
+            errs.append(f"{src}: {e}")
+    if tried and len(errs) == tried:
+        raise ValueError("; ".join(errs))
+    for e in errs:
+        print(f"  {hotel['key']} 일부 경로 실패 - {e}")
+    return sorted(out, key=lambda o: o["total_krw"]), tried
+
+
+def naver_offers(hotel):
     nights = (date.fromisoformat(CONFIG["check_out"]) - date.fromisoformat(CONFIG["check_in"])).days
     people = CONFIG["adults"]
     out = []
@@ -97,8 +171,9 @@ def offers_for(hotel):
             "room": (r.get("roomName") or "").strip(),
             "base_krw": round(krw), "local_tax_krw": round(local_tax_jpy * krw_per_jpy), "total_krw": total,
             "meals": meals, "free_cancel": bool(pf.get("isFreeCancel")),
+            "link": naver_link(hotel["naver_id"]),
         })
-    return sorted(out, key=lambda o: o["total_krw"])
+    return out
 
 
 def fmt_krw(v):
@@ -113,8 +188,9 @@ def build_message(hotel, best, n_under):
         f"  └ {best['ota']} · {best['room']} ({best['meals']}{', 무료취소' if best['free_cancel'] else ''})",
         f"  └ 총 {fmt_krw(best['total_krw'])} = 요금 {fmt_krw(best['base_krw'])}"
         f" + 숙박세·입욕세 {fmt_krw(best['local_tax_krw'])}",
+        *( [f"  └ {best['note']}"] if best.get("note") else [] ),
         f"  └ 기준가 미만 객실 {n_under}개 · {CONFIG['check_in']}~{CONFIG['check_out']} 성인 {CONFIG['adults']}명",
-        f"[링크] {naver_link(hotel['naver_id'])}",
+        f"[링크] {best['link']}",
     ])
 
 
@@ -131,7 +207,9 @@ def main():
         key = hotel["key"]
         prev = state.get(key, {})
         try:
-            offers = offers_for(hotel)
+            offers, tried = offers_for(hotel)
+            if not tried:
+                continue  # 이 실행 위치에서 볼 경로가 없는 숙소
         except (urllib.error.URLError, TimeoutError, ValueError, KeyError) as e:
             errors.append(f"{hotel['name']}: {e}")
             prev["fail_count"] = prev.get("fail_count", 0) + 1
