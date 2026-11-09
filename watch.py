@@ -252,7 +252,9 @@ def main():
                  f"{CONFIG['check_in']}~{CONFIG['check_out']} 성인 {CONFIG['adults']}명 · 기준 {fmt_krw(threshold)} 미만 · 20분 간격"]
         for h in CONFIG["hotels"]:
             c = state.get(h["key"], {}).get("cheapest")
-            lines.append(f"- {h['name'].split(' (')[0]}: " + (f"최저 {fmt_krw(c)}" if c else "매진"))
+            here = ("naver" in SOURCES and h.get("naver_id")) or ("official" in SOURCES and h.get("dormy_keyword"))
+            status = (f"최저 {fmt_krw(c)}" if c else "매진") if here else "이 위치에서는 조회 안 함(Mac 담당)"
+            lines.append(f"- {h['name'].split(' (')[0]}: {status}")
         lines += [f"- 조회 실패: {e}" for e in errors]
         send("\n".join(lines), disable_preview=True)
 
